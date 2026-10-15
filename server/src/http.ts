@@ -59,7 +59,9 @@ export interface Services {
  *   POST   /hooks/:id                      inbound webhook (verified by the trigger's secret)
  *
  *   GET    /connectors                     PUT [ConnectorConfig]   (MCP servers)
- *   GET    /provider                       PUT {baseUrl, apiKey, model}  (model provider; key is write-only)
+ *   GET    /providers                      POST {name, baseUrl, apiKey, model, summaryModel}  (keys are write-only)
+ *   PUT    /providers/:id                  DELETE /providers/:id
+ *   POST   /providers/:id/activate         POST /providers/:id/test
  *   GET    /notifiers                      PUT [NotifierConfig]    (Telegram, Slack, webhook)
  *   GET    /usage                          token usage per day and role
  *   GET    /audit?limit=100
@@ -181,17 +183,38 @@ export function createServer(s: Services) {
         }
       }
 
-      if (parts[0] === "provider" && parts.length === 1) {
-        if (m === "GET") return send(res, 200, s.provider.view());
-        if (m === "PUT") {
-          const b = await body();
-          try {
-            await s.provider.write(b ?? {});
-          } catch (e) {
-            throw new HttpError(400, (e as Error).message);
-          }
-          await s.store.audit({ event: "provider_updated", baseUrl: s.provider.view().baseUrl, model: s.provider.view().model });
+      if (parts[0] === "providers") {
+        const id = parts[1];
+        const fail = (e: unknown) => {
+          throw new HttpError(400, (e as Error).message);
+        };
+        if (!id && m === "GET") return send(res, 200, s.provider.view());
+        if (!id && m === "POST") {
+          const newId = await s.provider.upsert(undefined, await body()).catch(fail);
+          await s.store.audit({ event: "provider_updated", id: newId });
           return send(res, 200, s.provider.view());
+        }
+        if (id && parts.length === 2 && m === "PUT") {
+          await s.provider.upsert(id, await body()).catch(fail);
+          await s.store.audit({ event: "provider_updated", id });
+          return send(res, 200, s.provider.view());
+        }
+        if (id && parts.length === 2 && m === "DELETE") {
+          await s.provider.remove(id).catch(fail);
+          await s.store.audit({ event: "provider_updated", id, removed: true });
+          return send(res, 200, s.provider.view());
+        }
+        if (id && parts[2] === "activate" && m === "POST") {
+          await s.provider.activate(id).catch(fail);
+          await s.store.audit({ event: "provider_switched", id });
+          return send(res, 200, s.provider.view());
+        }
+        if (id && parts[2] === "test" && m === "POST") {
+          try {
+            return send(res, 200, await s.provider.test(id));
+          } catch (e) {
+            fail(e);
+          }
         }
       }
 

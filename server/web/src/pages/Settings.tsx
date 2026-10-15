@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Field, Input, StatusDot, Textarea } from "@cz/design-system";
+import { Badge, Button, Card, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Field, Input, StatusDot, Textarea } from "@cz/design-system";
 import { useEffect, useState } from "react";
 import { api, timeAgo, useApi } from "../api";
 import { Empty, ErrorNote, Loading, PageHeader, Section, toast } from "../ui";
@@ -16,59 +16,172 @@ export function SettingsPage() {
   );
 }
 
-type ProviderView = { baseUrl: string; model: string; hasKey: boolean; keyHint: string; defaults: { baseUrl: string; model: string } };
+type ProviderItem = { id: string; name: string; baseUrl: string; model: string; summaryModel: string; hasKey: boolean; keyHint: string; readOnly: boolean; active: boolean };
+type TestResult = { ok: boolean; ms: number; error?: string };
+
+/** Anthropic-compatible endpoints; model names are suggestions, check the provider's console. */
+const PRESETS: { name: string; baseUrl: string; model: string }[] = [
+  { name: "Anthropic 官方", baseUrl: "", model: "claude-sonnet-5-5" },
+  { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", model: "deepseek-chat" },
+  { name: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/anthropic", model: "glm-4.6" },
+  { name: "Kimi", baseUrl: "https://api.moonshot.cn/anthropic", model: "kimi-k2-turbo-preview" },
+  { name: "通义千问", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", model: "qwen3-coder-plus" },
+  { name: "自定义", baseUrl: "", model: "" },
+];
 
 function ModelProvider() {
-  const { data, error, reload } = useApi<ProviderView>("/provider");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [err, setErr] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!data) return;
-    setBaseUrl(data.baseUrl);
-    setModel(data.model);
-  }, [data]);
+  const { data, error, reload } = useApi<{ active: string; providers: ProviderItem[] }>("/providers");
+  const [editing, setEditing] = useState<ProviderItem | "new" | null>(null);
+  const [tests, setTests] = useState<Record<string, TestResult | "running">>({});
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    try {
+      await fn();
+      if (done) toast(done);
+      reload();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
+  const runTest = async (id: string) => {
+    setTests((t) => ({ ...t, [id]: "running" }));
+    const r = await api<TestResult>(`/providers/${id}/test`, { method: "POST" }).catch((e) => ({ ok: false, ms: 0, error: (e as Error).message }));
+    setTests((t) => ({ ...t, [id]: r }));
+  };
   return (
-    <Section title="模型供应商">
+    <Section
+      title="模型供应商"
+      actions={
+        <Button variant="soft" size="sm" onClick={() => setEditing("new")}>
+          添加供应商
+        </Button>
+      }
+    >
       {error && <ErrorNote>{error}</ErrorNote>}
       {!data && !error && <Loading />}
       {data && (
-        <Card className="grid gap-3 p-4">
-          <Field label="接口地址" htmlFor="provider-url" hint="兼容 Anthropic Messages API 的地址，不要带 /v1。留空用官方 api.anthropic.com。">
-            <Input id="provider-url" placeholder="https://api.anthropic.com" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-          </Field>
-          <Field label="API Key" htmlFor="provider-key" hint={data.hasKey ? `已设置（${data.keyHint}），留空则不修改` : "还没设置"}>
-            <Input id="provider-key" type="password" autoComplete="off" placeholder={data.hasKey ? "••••••••" : "sk-..."} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-          </Field>
-          <Field label="模型" htmlFor="provider-model" hint="需要支持工具调用（tool use）。" error={err}>
-            <Input id="provider-model" placeholder={data.defaults.model} value={model} onChange={(e) => setModel(e.target.value)} />
-          </Field>
-          <div className="flex justify-end">
-            <Button
-              loading={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await api("/provider", { method: "PUT", body: { baseUrl, apiKey, model } });
-                  setApiKey("");
-                  setErr(undefined);
-                  toast("已保存，下一次调用就会用新设置");
-                  reload();
-                } catch (e) {
-                  setErr((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              保存
-            </Button>
-          </div>
+        <Card className="divide-y divide-line-subtle">
+          {data.providers.map((p) => {
+            const t = tests[p.id];
+            return (
+              <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+                <div className="grid min-w-0 flex-1 gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-body font-medium text-fg">{p.name}</span>
+                    {p.active && <Badge tone="success">使用中</Badge>}
+                    {p.readOnly && <Badge tone="neutral">来自配置文件</Badge>}
+                  </div>
+                  <span className="truncate font-mono text-caption text-fg-muted">
+                    {p.model} · {p.baseUrl || "api.anthropic.com"} · {p.hasKey ? `key ${p.keyHint}` : "没有 key"}
+                  </span>
+                  {t && t !== "running" && (
+                    <span className={t.ok ? "text-caption text-success-fg" : "text-caption text-danger-fg"}>
+                      {t.ok ? `连通，${t.ms} ms` : `失败：${t.error}`}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" loading={t === "running"} disabled={!p.hasKey} onClick={() => runTest(p.id)}>
+                    测试
+                  </Button>
+                  {!p.readOnly && (
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(p)}>
+                      编辑
+                    </Button>
+                  )}
+                  {!p.readOnly && !p.active && (
+                    <Button variant="ghost" size="sm" onClick={() => confirm(`删除「${p.name}」？`) && act(() => api(`/providers/${p.id}`, { method: "DELETE" }), "已删除")}>
+                      删除
+                    </Button>
+                  )}
+                  {!p.active && (
+                    <Button variant="secondary" size="sm" disabled={!p.hasKey} onClick={() => act(() => api(`/providers/${p.id}/activate`, { method: "POST" }), `已切换到 ${p.name}`)}>
+                      启用
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </Card>
       )}
+      {editing && (
+        <ProviderDialog
+          item={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
     </Section>
+  );
+}
+
+function ProviderDialog({ item, onClose, onSaved }: { item?: ProviderItem; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({ name: item?.name ?? "", baseUrl: item?.baseUrl ?? "", apiKey: "", model: item?.model ?? "", summaryModel: item?.summaryModel ?? "" });
+  const [err, setErr] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            try {
+              await api(item ? `/providers/${item.id}` : "/providers", { method: item ? "PUT" : "POST", body: form });
+              toast("已保存");
+              onSaved();
+            } catch (e) {
+              setErr((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{item ? `编辑 ${item.name}` : "添加供应商"}</DialogTitle>
+            <DialogDescription>需要兼容 Anthropic Messages API，模型要支持工具调用。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {!item && (
+              <div className="flex flex-wrap gap-1">
+                {PRESETS.map((p) => (
+                  <Button key={p.name} type="button" variant={form.name === p.name ? "soft" : "secondary"} size="sm" onClick={() => setForm({ ...form, name: p.name === "自定义" ? "" : p.name, baseUrl: p.baseUrl, model: p.model })}>
+                    {p.name}
+                  </Button>
+                ))}
+              </div>
+            )}
+            <Field label="名称" htmlFor="pv-name">
+              <Input id="pv-name" value={form.name} onChange={set("name")} />
+            </Field>
+            <Field label="接口地址" htmlFor="pv-url" hint="不要带 /v1。留空用官方 api.anthropic.com。">
+              <Input id="pv-url" placeholder="https://api.anthropic.com" value={form.baseUrl} onChange={set("baseUrl")} />
+            </Field>
+            <Field label="API Key" htmlFor="pv-key" hint={item?.hasKey ? `已设置（${item.keyHint}），留空则不修改` : undefined}>
+              <Input id="pv-key" type="password" autoComplete="off" value={form.apiKey} onChange={set("apiKey")} />
+            </Field>
+            <Field label="模型" htmlFor="pv-model" hint="预设的模型名只是建议，以供应商控制台为准。">
+              <Input id="pv-model" value={form.model} onChange={set("model")} />
+            </Field>
+            <Field label="摘要模型（可选）" htmlFor="pv-sum" hint="对话太长时用来压缩历史，可以填便宜一点的模型；留空用上面的模型。" error={err}>
+              <Input id="pv-sum" value={form.summaryModel} onChange={set("summaryModel")} />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              取消
+            </Button>
+            <Button type="submit" loading={busy}>
+              保存
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -241,6 +354,7 @@ const EVENT_TEXT: Record<string, string> = {
   connectors_updated: "改连接器",
   notifiers_updated: "改通知",
   provider_updated: "改模型",
+  provider_switched: "切换模型",
 };
 
 function Audit() {
