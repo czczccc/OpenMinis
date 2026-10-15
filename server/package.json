@@ -1,0 +1,20 @@
+{
+  "name": "openminis-server",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted always-on cloud runtime for OpenMinis agents",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0",
+    "croner": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}
