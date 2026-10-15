@@ -19,10 +19,12 @@ export function runShell(
   workspace: string,
   command: string,
   timeoutMs = 120_000,
+  network: "all" | "none" = "all",
+  signal?: AbortSignal,
 ): Promise<ExecResult> {
   const [bin, args] =
     config.sandbox === "docker"
-      ? ["docker", ["run", "--rm", "-i", "-v", `${workspace}:/workspace`, "-w", "/workspace",
+      ? ["docker", ["run", "--rm", "-i", ...(network === "none" ? ["--network", "none"] : []), "-v", `${workspace}:/workspace`, "-w", "/workspace",
           "--memory", "1g", "--cpus", "1", config.dockerImage, "sh", "-c", command]]
       : ["bash", ["-c", command]];
 
@@ -35,14 +37,19 @@ export function runShell(
     child.stdout.on("data", append);
     child.stderr.on("data", append);
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       try {
         process.kill(-child.pid!, "SIGKILL");
       } catch {}
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
     }, timeoutMs);
+    signal?.addEventListener("abort", kill, { once: true });
     child.on("close", (exitCode) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", kill);
       if (output.length >= MAX_OUTPUT) output = output.slice(0, MAX_OUTPUT) + "\n[output truncated]";
       resolve({ exitCode, output, timedOut });
     });

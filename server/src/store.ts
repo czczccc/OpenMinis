@@ -12,6 +12,8 @@ export interface Routine {
   timezone: string;
   prompt: string;
   enabled: boolean;
+  /** Notifier ids that receive the result. */
+  notify?: string[];
   lastRunAt?: string;
   lastResult?: string;
 }
@@ -116,6 +118,44 @@ export class Store {
 
   private sessionPath(roleId: string, sessionId: string) {
     return path.join(this.roleDir(roleId), "sessions", `${assertId(sessionId)}.json`);
+  }
+
+  /** Keep compacted-away messages on disk for reference. */
+  async archiveSession(roleId: string, sessionId: string, messages: Message[]) {
+    const dir = path.join(this.roleDir(roleId), "sessions", "archive");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, `${assertId(sessionId)}-${Date.now()}.json`), JSON.stringify(messages));
+  }
+
+  /** Token usage per day and role, in usage.json. */
+  async addUsage(roleId: string, model: string, usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
+    const file = path.join(this.dataDir, "usage.json");
+    const day = new Date().toISOString().slice(0, 10);
+    const run = async () => {
+      let all: Record<string, Record<string, any>> = {};
+      try {
+        all = JSON.parse(await fs.readFile(file, "utf8"));
+      } catch {}
+      const row = ((all[day] ??= {})[roleId] ??= { model, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+      row.requests++;
+      row.input += usage.input_tokens ?? 0;
+      row.output += usage.output_tokens ?? 0;
+      row.cacheRead += usage.cache_read_input_tokens ?? 0;
+      row.cacheWrite += usage.cache_creation_input_tokens ?? 0;
+      await atomicWrite(file, JSON.stringify(all, null, 1));
+    };
+    this.usageQueue = this.usageQueue.then(run, run);
+    await this.usageQueue;
+  }
+
+  private usageQueue: Promise<void> = Promise.resolve();
+
+  async readUsage(): Promise<unknown> {
+    try {
+      return JSON.parse(await fs.readFile(path.join(this.dataDir, "usage.json"), "utf8"));
+    } catch {
+      return {};
+    }
   }
 
   async loadRoutines(): Promise<Routine[]> {

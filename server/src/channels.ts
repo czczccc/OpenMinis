@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AgentRuntime } from "./agent.ts";
+import { bus } from "./events.ts";
 import { HttpError, assertId, type Store } from "./store.ts";
 
 export interface Channel {
@@ -89,6 +90,7 @@ export class Channels {
   private async append(id: string, msg: ChannelMessage) {
     const ch = await this.get(id);
     ch.messages.push(msg);
+    bus.publish({ type: "channel_message", channelId: id, from: msg.from, text: msg.text });
     const tmp = `${this.file(id)}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(ch, null, 1));
     await fs.rename(tmp, this.file(id));
@@ -99,9 +101,9 @@ export class Channels {
    * lead answers. Roles may then hand off to each other up to MAX_HOPS times.
    * Returns the messages produced by this post.
    */
-  post(id: string, text: string): Promise<ChannelMessage[]> {
+  post(id: string, text: string, signal?: AbortSignal): Promise<ChannelMessage[]> {
     const prev = this.queues.get(id) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(() => this.postUnlocked(id, text));
+    const next = prev.catch(() => {}).then(() => this.postUnlocked(id, text, signal));
     this.queues.set(id, next);
     next.finally(() => {
       if (this.queues.get(id) === next) this.queues.delete(id);
@@ -109,7 +111,7 @@ export class Channels {
     return next;
   }
 
-  private async postUnlocked(id: string, text: string): Promise<ChannelMessage[]> {
+  private async postUnlocked(id: string, text: string, signal?: AbortSignal): Promise<ChannelMessage[]> {
     const ch = await this.get(id);
     const mention = text.match(/^@([a-z0-9][a-z0-9_-]*)\b/);
     let target = mention && ch.roles.includes(mention[1]) ? mention[1] : ch.roles[0];
@@ -133,7 +135,7 @@ export class Channels {
         },
       };
       const prompt = await this.prompt(id, target);
-      const result = await this.agent.run(target, `channel-${id}`, prompt, `channel:${id}`, extra);
+      const result = await this.agent.run(target, `channel-${id}`, prompt, `channel:${id}`, { extra, signal });
       const msg: ChannelMessage = {
         from: target,
         text: handoff ? `${result.text}\n\n→ @${handoff.role}: ${handoff.note}`.trim() : result.text,

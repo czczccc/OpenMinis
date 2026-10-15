@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
-import type { AgentRuntime } from "./agent.ts";
+import type { Tasks } from "./tasks.ts";
 import { HttpError, assertId, type Routine, type Store } from "./store.ts";
 
 /** Fires routines on their cron schedule, in their own timezone, even with no client connected. */
@@ -8,11 +8,11 @@ export class Scheduler {
   private jobs = new Map<string, Cron>();
 
   private store: Store;
-  private agent: AgentRuntime;
+  private tasks: Tasks;
 
-  constructor(store: Store, agent: AgentRuntime) {
+  constructor(store: Store, tasks: Tasks) {
     this.store = store;
-    this.agent = agent;
+    this.tasks = tasks;
   }
 
   async start() {
@@ -36,6 +36,7 @@ export class Scheduler {
       timezone: input.timezone ?? "UTC",
       prompt: String(input.prompt ?? ""),
       enabled: input.enabled ?? true,
+      notify: input.notify,
     };
     if (!routine.prompt) throw new HttpError(400, "prompt is required");
     try {
@@ -73,12 +74,15 @@ export class Scheduler {
   }
 
   private async fire(r: Routine) {
-    const result = await this.agent.run(r.roleId, `routine-${r.id}`, r.prompt, `routine:${r.id}`);
+    const task = await this.tasks.create({
+      kind: "role", roleId: r.roleId, sessionId: `routine-${r.id}`, prompt: r.prompt, trigger: `routine:${r.id}`, notify: r.notify,
+    });
+    const result = await this.tasks.wait(task.id);
     const all = await this.store.loadRoutines();
     const saved = all.find((x) => x.id === r.id);
     if (saved) {
       saved.lastRunAt = new Date().toISOString();
-      saved.lastResult = result.text.slice(0, 2000);
+      saved.lastResult = (result.text ?? result.error ?? "").slice(0, 2000);
       await this.store.saveRoutines(all);
     }
     return result;

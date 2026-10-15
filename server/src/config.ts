@@ -8,6 +8,14 @@ export interface Config {
   maxTurns: number;
   sandbox: "local" | "docker";
   dockerImage: string;
+  /** Summarise older messages once a session passes this many (estimated) tokens. */
+  compactAtTokens: number;
+  approvalTimeoutMs: number;
+  browser: boolean;
+  chromiumPath?: string;
+  recordBrowser: boolean;
+  /** Public base URL, used to show webhook addresses. */
+  publicUrl?: string;
 }
 
 export function loadConfig(env = process.env): Config {
@@ -26,5 +34,11 @@ export function loadConfig(env = process.env): Config {
     maxTurns: Number(env.MINIS_MAX_TURNS ?? 40),
     sandbox,
     dockerImage: env.MINIS_DOCKER_IMAGE ?? "alpine:3.20",
+    compactAtTokens: Number(env.MINIS_COMPACT_AT_TOKENS ?? 120_000),
+    approvalTimeoutMs: Number(env.MINIS_APPROVAL_TIMEOUT_MINUTES ?? 24 * 60) * 60_000,
+    browser: env.MINIS_BROWSER !== "off",
+    chromiumPath: env.MINIS_CHROMIUM_PATH || undefined,
+    recordBrowser: env.MINIS_RECORD_BROWSER !== "off",
+    publicUrl: env.MINIS_PUBLIC_URL?.replace(/\/$/, ""),
   };
 }

@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Self-hosted always-on cloud runtime for OpenMinis agents",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "typecheck": "tsc --noEmit",
@@ -11,10 +13,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",
-    "croner": "^10.0.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "croner": "^10.0.1",
+    "playwright-core": "^1.64.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^3.25.76"
   }
 }

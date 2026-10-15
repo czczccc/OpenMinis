@@ -3,6 +3,7 @@ import path from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Config } from "./config.ts";
 import { runShell } from "./sandbox.ts";
+import type { RolePolicy } from "./policy.ts";
 import type { Store } from "./store.ts";
 
 export const TOOL_DEFS: Anthropic.Tool[] = [
@@ -39,23 +40,28 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   },
 ];
 
+/** What a tool returns to the model: plain text, or text and image blocks. */
+export type ToolOutput = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>;
+
 export interface ToolContext {
   config: Config;
   store: Store;
   roleId: string;
+  policy: RolePolicy;
+  signal?: AbortSignal;
 }
 
 export async function executeTool(
   ctx: ToolContext,
   name: string,
   input: Record<string, any>,
-): Promise<{ content: string; isError: boolean }> {
+): Promise<{ content: ToolOutput; isError: boolean }> {
   const workspace = ctx.store.workspace(ctx.roleId);
   try {
     switch (name) {
       case "bash": {
         const timeout = Math.min(Number(input.timeout_seconds ?? 120), 600) * 1000;
-        const r = await runShell(ctx.config, workspace, String(input.command), timeout);
+        const r = await runShell(ctx.config, workspace, String(input.command), timeout, ctx.policy.network, ctx.signal);
         const status = r.timedOut ? "timed out" : `exit ${r.exitCode}`;
         return { content: `[${status}]\n${r.output}`, isError: r.exitCode !== 0 };
       }
