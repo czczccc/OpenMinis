@@ -6,6 +6,7 @@ import type { Config } from "./config.ts";
 import { Connectors } from "./connectors.ts";
 import { createServer, type Services } from "./http.ts";
 import { Notifiers } from "./notify.ts";
+import { Provider } from "./provider.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
 import { Tasks } from "./tasks.ts";
@@ -17,8 +18,10 @@ export async function createApp(config: Config, opts: { telegramApi?: string } =
   const approvals = new Approvals(config.dataDir, config.approvalTimeoutMs);
   const connectors = new Connectors(config.dataDir);
   await connectors.reload();
+  const provider = new Provider(config.dataDir, { baseUrl: process.env.ANTHROPIC_BASE_URL, apiKey: process.env.ANTHROPIC_API_KEY, model: config.model });
+  await provider.load();
   const browser = config.browser ? new BrowserPool(config.chromiumPath, config.recordBrowser) : undefined;
-  const agent = new AgentRuntime(config, store, { approvals, browser, connectors });
+  const agent = new AgentRuntime(config, store, { approvals, browser, connectors, provider });
   const channels = new Channels(store, agent);
   const tasks = new Tasks(config.dataDir, agent, channels);
   const notifiers = new Notifiers(config.dataDir, approvals, tasks, opts.telegramApi);
@@ -30,7 +33,7 @@ export async function createApp(config: Config, opts: { telegramApi?: string } =
   await notifiers.start();
   await scheduler.start();
 
-  const services: Services = { config, store, scheduler, channels, tasks, approvals, connectors, notifiers, triggers };
+  const services: Services = { config, store, scheduler, channels, tasks, approvals, connectors, notifiers, triggers, provider };
   const server = createServer(services);
   const stop = async () => {
     scheduler.stop();

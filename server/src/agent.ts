@@ -5,6 +5,7 @@ import type { Config } from "./config.ts";
 import type { Connectors, ConnectorTool } from "./connectors.ts";
 import { bus } from "./events.ts";
 import { decide, loadPolicy, type RolePolicy, type ToolMeta } from "./policy.ts";
+import type { Provider } from "./provider.ts";
 import type { Message, Store } from "./store.ts";
 import { TOOL_DEFS, executeTool, type ToolOutput } from "./tools.ts";
 
@@ -31,6 +32,7 @@ export interface AgentDeps {
   approvals: Approvals;
   browser?: BrowserPool;
   connectors?: Connectors;
+  provider: Provider;
 }
 
 const KEEP_RECENT = 12;
@@ -45,7 +47,6 @@ const KEEP_RECENT = 12;
  * Runs on the same (role, session) are serialised.
  */
 export class AgentRuntime {
-  private client: Anthropic;
   private locks = new Map<string, Promise<unknown>>();
   private config: Config;
   private store: Store;
@@ -55,7 +56,6 @@ export class AgentRuntime {
     this.config = config;
     this.store = store;
     this.deps = deps;
-    this.client = new Anthropic({ maxRetries: 5, timeout: 10 * 60 * 1000 });
   }
 
   /** Send `prompt` to the session, or pass null to resume an interrupted run. */
@@ -132,11 +132,11 @@ export class AgentRuntime {
       }
       messages = await this.maybeCompact(roleId, sessionId, system, messages, opts.signal);
       turns++;
-      const response = await this.client.messages.create(
-        { model: this.config.model, max_tokens: 16_000, system, tools: tools.defs, messages },
+      const response = await this.deps.provider.client().messages.create(
+        { model: this.deps.provider.current().model, max_tokens: 16_000, system, tools: tools.defs, messages },
         { signal: opts.signal },
       );
-      await this.store.addUsage(roleId, this.config.model, response.usage);
+      await this.store.addUsage(roleId, this.deps.provider.current().model, response.usage);
       messages.push({ role: "assistant", content: response.content });
       await this.store.saveSession(roleId, sessionId, messages);
       stopReason = response.stop_reason;
@@ -223,9 +223,9 @@ export class AgentRuntime {
 
     const old = messages.slice(0, cut);
     const transcript = old.map(renderForSummary).join("\n\n").slice(-400_000);
-    const response = await this.client.messages.create(
+    const response = await this.deps.provider.client().messages.create(
       {
-        model: this.config.model,
+        model: this.deps.provider.current().model,
         max_tokens: 4000,
         system,
         messages: [{
@@ -238,7 +238,7 @@ export class AgentRuntime {
       },
       { signal },
     );
-    await this.store.addUsage(roleId, this.config.model, response.usage);
+    await this.store.addUsage(roleId, this.deps.provider.current().model, response.usage);
     const summary = blocksText(response.content);
     const first = messages[cut];
     const compacted: Message[] = [

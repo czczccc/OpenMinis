@@ -21,7 +21,6 @@ export interface Config {
 export function loadConfig(env = process.env): Config {
   const apiToken = env.MINIS_API_TOKEN ?? "";
   if (!apiToken) throw new Error("MINIS_API_TOKEN is required");
-  if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required");
   const sandbox = env.MINIS_SANDBOX ?? "local";
   if (sandbox !== "local" && sandbox !== "docker") {
     throw new Error(`MINIS_SANDBOX must be "local" or "docker", got "${sandbox}"`);
