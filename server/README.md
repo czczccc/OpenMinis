@@ -11,6 +11,7 @@ other in channels, and stop to ask you before doing anything risky.
 ```sh
 cd server
 npm install
+(cd web && npm install && npm run build)        # web console, served at /
 export ANTHROPIC_API_KEY=sk-ant-...
 export MINIS_API_TOKEN=$(openssl rand -hex 24)   # clients send this as a Bearer token
 npm start                                         # listens on :8787
@@ -44,6 +45,7 @@ sudo useradd -m -s /bin/bash minis && sudo usermod -aG docker minis
 sudo git clone https://github.com/czczccc/OpenMinis /opt/openminis
 sudo chown -R minis:minis /opt/openminis
 cd /opt/openminis/server && sudo -u minis npm install --omit=dev
+sudo -u minis sh -c 'cd web && npm install && npm run build'
 
 # Chromium for the browser tool (same Playwright version as package.json)
 sudo npx -y playwright@1.64.1 install-deps chromium
@@ -66,6 +68,22 @@ journalctl -u openminis -f
 The server speaks plain HTTP. Put it behind Caddy or nginx with HTTPS, or keep
 the port firewalled and reach it over Tailscale/SSH, before exposing it.
 Webhooks (`/hooks/...`) are the only routes that need to be reachable from outside.
+
+## Web console
+
+Open `http://<server>:8787/` and log in with `MINIS_API_TOKEN`. It is built
+with [CZ Design System](https://github.com/czczccc/cz-design-system) (React +
+Tailwind) in `web/`, works on phones, and updates live over `/events`:
+
+- **频道 Channels**: group chats with your roles, handoffs shown inline
+- **角色 Roles**: chat with a role (tool calls are expandable), edit its persona, read its memory, edit its policy
+- **审批 Approvals**: approve or deny pending actions; history
+- **任务 Tasks**: everything running or finished, with stop
+- **自动化 Automation**: routines and webhook / GitHub triggers (copy URL and secret)
+- **设置 Settings**: connectors, notifiers, token usage, audit log
+
+After pulling changes, rebuild it with `cd web && npm run build`.
+`cd web && npm run dev` serves it with hot reload against a server on :8787.
 
 ## Concepts
 

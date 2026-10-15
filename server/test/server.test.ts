@@ -38,6 +38,14 @@ after(async () => {
 });
 
 describe("core", () => {
+  test("serves the web console without a token, or explains how to build it", async () => {
+    const res = await fetch(`${base}/`);
+    const body = await res.text();
+    if (res.status === 200) assert.match(body, /<div id="root">/);
+    else assert.match(body, /npm run build/);
+    assert.equal((await fetch(`${base}/assets/..%2F..%2Fpackage.json`)).status, 401);
+  });
+
   test("rejects requests without the token", async () => {
     assert.equal((await fetch(`${base}/roles`)).status, 401);
   });

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import fs from "node:fs/promises";
 import http from "node:http";
 import type { Approvals } from "./approvals.ts";
 import type { Channels } from "./channels.ts";
@@ -28,6 +29,7 @@ export interface Services {
  * REST API. Everything except /health and /hooks/:id needs
  * `Authorization: Bearer $MINIS_API_TOKEN` (or ?token= for /events).
  *
+ *   GET    /                               web console (static, from web/dist)
  *   GET    /health
  *   GET    /events                         Server-Sent Events stream of everything happening
  *
@@ -66,6 +68,7 @@ export function createServer(s: Services) {
       const parts = url.pathname.split("/").filter(Boolean);
       const m = req.method ?? "GET";
       if (url.pathname === "/health") return send(res, 200, { ok: true });
+      if (m === "GET" && isWebPath(url.pathname)) return serveWeb(res, url.pathname);
 
       if (parts[0] === "hooks" && parts.length === 2 && m === "POST") {
         const task = await s.triggers.receive(parts[1], req.headers, await readBody(req, 5_000_000));
@@ -203,6 +206,42 @@ export function createServer(s: Services) {
   });
 }
 
+/** The web console (built into web/dist): static files, no auth; the page asks for the API token. */
+const WEB_DIR = new URL("../web/dist/", import.meta.url);
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".woff2": "font/woff2",
+};
+
+function isWebPath(p: string) {
+  return p === "/" || p === "/index.html" || /^\/assets\/[\w.-]+$/.test(p);
+}
+
+async function serveWeb(res: http.ServerResponse, pathname: string) {
+  const file = pathname === "/" ? "index.html" : pathname.slice(1);
+  let body: Buffer;
+  try {
+    body = await fs.readFile(new URL(file, WEB_DIR));
+  } catch {
+    if (file === "index.html") {
+      return sendText(res, "Web console not built. Run: cd server/web && npm install && npm run build", 404);
+    }
+    throw new HttpError(404, "not found");
+  }
+  const ext = file.slice(file.lastIndexOf("."));
+  res.writeHead(200, {
+    "content-type": TYPES[ext] ?? "application/octet-stream",
+    // Hashed assets never change; the page itself must always be fresh.
+    "cache-control": file.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+  }).end(body);
+}
+
 function withUrl(config: Config, t: { id: string }) {
   return { ...t, url: `${config.publicUrl ?? ""}/hooks/${t.id}` };
 }
@@ -246,6 +285,6 @@ function send(res: http.ServerResponse, status: number, data: unknown) {
   res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(data));
 }
 
-function sendText(res: http.ServerResponse, text: string) {
-  res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" }).end(text);
+function sendText(res: http.ServerResponse, text: string, status = 200) {
+  res.writeHead(status, { "content-type": "text/markdown; charset=utf-8" }).end(text);
 }
