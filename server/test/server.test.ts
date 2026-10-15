@@ -218,6 +218,23 @@ describe("connectors", () => {
   });
 });
 
+describe("model provider", () => {
+  test("never returns the key and keeps it when left empty", async () => {
+    const r = await call("GET", "/provider");
+    assert.equal(r.body.hasKey, true);
+    assert.equal(r.body.apiKey, undefined);
+    assert.equal((await call("PUT", "/provider", { baseUrl: "ftp://x" })).status, 400);
+    const saved = await call("PUT", "/provider", { baseUrl: `${api.url}/`, apiKey: "", model: "other-model" });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.baseUrl, api.url);
+    assert.equal(saved.body.model, "other-model");
+    assert.equal(saved.body.hasKey, true);
+    assert.ok(!JSON.stringify(saved.body).includes('"test"'));
+    await call("PUT", "/provider", { model: "" });
+    assert.equal((await call("GET", "/provider")).body.model, r.body.model);
+  });
+});
+
 describe("triggers and notifiers", () => {
   test("sends results and approval requests to a webhook notifier", async () => {
     await call("PUT", "/notifiers", [{ id: "hook", kind: "webhook", url: `${site.url}/notify`, approvals: true }]);

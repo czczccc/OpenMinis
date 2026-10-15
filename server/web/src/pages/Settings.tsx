@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Field, StatusDot, Textarea } from "@cz/design-system";
+import { Badge, Button, Card, Field, Input, StatusDot, Textarea } from "@cz/design-system";
 import { useEffect, useState } from "react";
 import { api, timeAgo, useApi } from "../api";
 import { Empty, ErrorNote, Loading, PageHeader, Section, toast } from "../ui";
@@ -6,12 +6,69 @@ import { Empty, ErrorNote, Loading, PageHeader, Section, toast } from "../ui";
 export function SettingsPage() {
   return (
     <>
-      <PageHeader title="设置" description="连接外部服务、配置通知，查看用量和操作日志。" />
+      <PageHeader title="设置" description="选择模型供应商，连接外部服务、配置通知，查看用量和操作日志。" />
+      <ModelProvider />
       <Connectors />
       <Notifiers />
       <Usage />
       <Audit />
     </>
+  );
+}
+
+type ProviderView = { baseUrl: string; model: string; hasKey: boolean; keyHint: string; defaults: { baseUrl: string; model: string } };
+
+function ModelProvider() {
+  const { data, error, reload } = useApi<ProviderView>("/provider");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [err, setErr] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!data) return;
+    setBaseUrl(data.baseUrl);
+    setModel(data.model);
+  }, [data]);
+  return (
+    <Section title="模型供应商">
+      {error && <ErrorNote>{error}</ErrorNote>}
+      {!data && !error && <Loading />}
+      {data && (
+        <Card className="grid gap-3 p-4">
+          <Field label="接口地址" htmlFor="provider-url" hint="兼容 Anthropic Messages API 的地址，不要带 /v1。留空用官方 api.anthropic.com。">
+            <Input id="provider-url" placeholder="https://api.anthropic.com" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+          </Field>
+          <Field label="API Key" htmlFor="provider-key" hint={data.hasKey ? `已设置（${data.keyHint}），留空则不修改` : "还没设置"}>
+            <Input id="provider-key" type="password" autoComplete="off" placeholder={data.hasKey ? "••••••••" : "sk-..."} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          </Field>
+          <Field label="模型" htmlFor="provider-model" hint="需要支持工具调用（tool use）。" error={err}>
+            <Input id="provider-model" placeholder={data.defaults.model} value={model} onChange={(e) => setModel(e.target.value)} />
+          </Field>
+          <div className="flex justify-end">
+            <Button
+              loading={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await api("/provider", { method: "PUT", body: { baseUrl, apiKey, model } });
+                  setApiKey("");
+                  setErr(undefined);
+                  toast("已保存，下一次调用就会用新设置");
+                  reload();
+                } catch (e) {
+                  setErr((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              保存
+            </Button>
+          </div>
+        </Card>
+      )}
+    </Section>
   );
 }
 
@@ -183,6 +240,7 @@ const EVENT_TEXT: Record<string, string> = {
   policy_updated: "改权限",
   connectors_updated: "改连接器",
   notifiers_updated: "改通知",
+  provider_updated: "改模型",
 };
 
 function Audit() {

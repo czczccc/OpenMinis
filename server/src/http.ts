@@ -10,6 +10,7 @@ import type { Notifiers } from "./notify.ts";
 import { loadPolicy, savePolicy } from "./policy.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { HttpError, assertId, type Store } from "./store.ts";
+import type { Provider } from "./provider.ts";
 import type { Tasks } from "./tasks.ts";
 import type { Triggers } from "./triggers.ts";
 
@@ -23,6 +24,7 @@ export interface Services {
   connectors: Connectors;
   notifiers: Notifiers;
   triggers: Triggers;
+  provider: Provider;
 }
 
 /**
@@ -57,6 +59,7 @@ export interface Services {
  *   POST   /hooks/:id                      inbound webhook (verified by the trigger's secret)
  *
  *   GET    /connectors                     PUT [ConnectorConfig]   (MCP servers)
+ *   GET    /provider                       PUT {baseUrl, apiKey, model}  (model provider; key is write-only)
  *   GET    /notifiers                      PUT [NotifierConfig]    (Telegram, Slack, webhook)
  *   GET    /usage                          token usage per day and role
  *   GET    /audit?limit=100
@@ -175,6 +178,20 @@ export function createServer(s: Services) {
           }
           await s.store.audit({ event: "connectors_updated", ids: (Array.isArray(b) ? b : []).map((c: any) => c.id) });
           return send(res, 200, s.connectors.status());
+        }
+      }
+
+      if (parts[0] === "provider" && parts.length === 1) {
+        if (m === "GET") return send(res, 200, s.provider.view());
+        if (m === "PUT") {
+          const b = await body();
+          try {
+            await s.provider.write(b ?? {});
+          } catch (e) {
+            throw new HttpError(400, (e as Error).message);
+          }
+          await s.store.audit({ event: "provider_updated", baseUrl: s.provider.view().baseUrl, model: s.provider.view().model });
+          return send(res, 200, s.provider.view());
         }
       }
 

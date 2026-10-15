@@ -58,6 +58,8 @@ MINIS_SANDBOX=docker
 MINIS_DATA_DIR=/opt/openminis/server/data
 ENV
 sudo chmod 600 /etc/openminis.env
+# ANTHROPIC_API_KEY is optional here: the endpoint, key and model can also be set
+# (and changed later) in the console under Settings → Model provider.
 sudo grep MINIS_API_TOKEN /etc/openminis.env   # your API token
 
 sudo cp deploy/openminis.service /etc/systemd/system/
