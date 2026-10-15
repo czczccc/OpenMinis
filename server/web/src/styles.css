@@ -1,0 +1,23 @@
+@import "@cz/design-system/styles.css";
+@source "./";
+
+/* Bottom nav on phones clears the home indicator. */
+@utility pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.25rem);
+}
+
+/* Chat bubbles and tool cards stay narrower than the conversation. */
+@utility bubble-width {
+  max-width: 92%;
+  @variant md {
+    max-width: 80%;
+  }
+}
+
+/* The chat fills the viewport below the page header (and above the phone nav). */
+@utility chat-height {
+  height: calc(100dvh - 13rem);
+  @variant md {
+    height: calc(100dvh - 12rem);
+  }
+}
