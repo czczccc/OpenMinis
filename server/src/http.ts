@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import type { AgentRuntime } from "./agent.ts";
+import type { Channels } from "./channels.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { HttpError, assertId, type Store } from "./store.ts";
@@ -17,9 +18,12 @@ import { HttpError, assertId, type Store } from "./store.ts";
  *   GET    /routines                    POST {roleId, cron, timezone, prompt}
  *   DELETE /routines/:id
  *   POST   /routines/:id/run
+ *   GET    /channels                    POST {id, roles: [lead, ...]}
+ *   GET    /channels/:id
+ *   POST   /channels/:id/messages       {text}  ("@role ..." addresses a role)
  *   GET    /audit?limit=100
  */
-export function createServer(config: Config, store: Store, agent: AgentRuntime, scheduler: Scheduler) {
+export function createServer(config: Config, store: Store, agent: AgentRuntime, scheduler: Scheduler, channels: Channels) {
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
@@ -63,6 +67,19 @@ export function createServer(config: Config, store: Store, agent: AgentRuntime, 
         }
         if (parts.length === 3 && parts[2] === "run" && m === "POST") {
           return send(res, 200, await scheduler.runNow(parts[1]));
+        }
+      }
+
+      if (parts[0] === "channels") {
+        if (parts.length === 1 && m === "GET") return send(res, 200, await channels.list());
+        if (parts.length === 1 && m === "POST") {
+          return send(res, 201, await channels.create(JSON.parse((await readBody(req)) || "{}")));
+        }
+        if (parts.length === 2 && m === "GET") return send(res, 200, await channels.get(parts[1]));
+        if (parts.length === 3 && parts[2] === "messages" && m === "POST") {
+          const body = JSON.parse((await readBody(req)) || "{}");
+          if (!body.text) throw new HttpError(400, "text is required");
+          return send(res, 200, await channels.post(parts[1], String(body.text)));
         }
       }
 

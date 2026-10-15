@@ -7,8 +7,21 @@ import { after, before, test } from "node:test";
 
 // Fake Anthropic API: first call asks for a bash tool, second call answers with text.
 let calls = 0;
+/** Responses to return before falling back to the tool-then-text default. */
+const script: { content: unknown[]; stop: string }[] = [];
+const seenTools: string[][] = [];
 const fakeApi = http.createServer(async (req, res) => {
-  for await (const _ of req);
+  let raw = "";
+  for await (const c of req) raw += c;
+  seenTools.push(JSON.parse(raw).tools.map((t: any) => t.name));
+  const next = script.shift();
+  if (next) {
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+      id: "msg", type: "message", role: "assistant", model: "fake", content: next.content,
+      stop_reason: next.stop, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    return;
+  }
   calls++;
   const content = calls % 2 === 1
     ? [{ type: "tool_use", id: `tu_${calls}`, name: "bash", input: { command: "echo hi > out.txt && cat out.txt" } }]
@@ -40,13 +53,14 @@ before(async () => {
   const { AgentRuntime } = await import("../src/agent.ts");
   const { Scheduler } = await import("../src/scheduler.ts");
   const { createServer } = await import("../src/http.ts");
+  const { Channels } = await import("../src/channels.ts");
   const config = loadConfig();
   const store = new Store(config.dataDir);
   const agent = new AgentRuntime(config, store);
   const s = new Scheduler(store, agent);
   scheduler = s;
   await s.start();
-  server = createServer(config, store, agent, s);
+  server = createServer(config, store, agent, s, new Channels(store, agent));
   await new Promise<void>((r) => server.listen(0, r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -106,4 +120,41 @@ test("keeps roles' memory and files separate and blocks path escapes", async () 
 test("writes an audit trail", async () => {
   const audit = await (await fetch(`${base}/audit`, { headers: auth })).json();
   assert.ok(audit.some((e: any) => e.event === "tool" && e.tool === "bash"));
+});
+
+test("channel routes to the lead, then a role hands off to another", async () => {
+  const created = await fetch(`${base}/channels`, {
+    method: "POST", headers: auth, body: JSON.stringify({ id: "team", roles: ["lead", "dev"] }),
+  });
+  assert.equal(created.status, 201);
+  script.push(
+    { content: [{ type: "tool_use", id: "h1", name: "handoff", input: { role: "dev", note: "fix the bug" } }], stop: "tool_use" },
+    { content: [{ type: "text", text: "passing to dev" }], stop: "end_turn" },
+    { content: [{ type: "text", text: "bug fixed" }], stop: "end_turn" },
+  );
+  const msgs = await (await fetch(`${base}/channels/team/messages`, {
+    method: "POST", headers: auth, body: JSON.stringify({ text: "please fix the login bug" }),
+  })).json();
+  assert.deepEqual(msgs.map((m: any) => m.from), ["user", "lead", "dev"]);
+  assert.equal(msgs[1].handoffTo, "dev");
+  assert.match(msgs[1].text, /fix the bug/);
+  assert.equal(msgs[2].text, "bug fixed");
+  assert.ok(seenTools.at(-1)!.includes("handoff"));
+  const ch = await (await fetch(`${base}/channels/team`, { headers: auth })).json();
+  assert.equal(ch.messages.length, 3);
+  // Roles keep separate memory: dev's channel session is its own.
+  const devSession = await (await fetch(`${base}/roles/dev/sessions/channel-team`, { headers: auth })).json();
+  assert.match(JSON.stringify(devSession), /fix the bug/);
+});
+
+test("@role addresses a specific role and duplicate channels are rejected", async () => {
+  script.push({ content: [{ type: "text", text: "dev here" }], stop: "end_turn" });
+  const msgs = await (await fetch(`${base}/channels/team/messages`, {
+    method: "POST", headers: auth, body: JSON.stringify({ text: "@dev status?" }),
+  })).json();
+  assert.equal(msgs[1].from, "dev");
+  const dup = await fetch(`${base}/channels`, {
+    method: "POST", headers: auth, body: JSON.stringify({ id: "team", roles: ["x"] }),
+  });
+  assert.equal(dup.status, 409);
 });

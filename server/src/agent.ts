@@ -3,6 +3,12 @@ import type { Config } from "./config.ts";
 import type { Message, Store } from "./store.ts";
 import { TOOL_DEFS, executeTool } from "./tools.ts";
 
+/** Extra tools a caller (e.g. a channel) adds to one run. */
+export interface ExtraTools {
+  defs: Anthropic.Tool[];
+  handle(name: string, input: Record<string, any>): Promise<{ content: string; isError: boolean }>;
+}
+
 export interface RunResult {
   sessionId: string;
   text: string;
@@ -27,10 +33,10 @@ export class AgentRuntime {
     this.store = store;
   }
 
-  run(roleId: string, sessionId: string, prompt: string, trigger: string): Promise<RunResult> {
+  run(roleId: string, sessionId: string, prompt: string, trigger: string, extra?: ExtraTools): Promise<RunResult> {
     const key = `${roleId}/${sessionId}`;
     const prev = this.locks.get(key) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(() => this.runUnlocked(roleId, sessionId, prompt, trigger));
+    const next = prev.catch(() => {}).then(() => this.runUnlocked(roleId, sessionId, prompt, trigger, extra));
     this.locks.set(key, next);
     next.finally(() => {
       if (this.locks.get(key) === next) this.locks.delete(key);
@@ -38,7 +44,13 @@ export class AgentRuntime {
     return next;
   }
 
-  private async runUnlocked(roleId: string, sessionId: string, prompt: string, trigger: string): Promise<RunResult> {
+  private async runUnlocked(
+    roleId: string,
+    sessionId: string,
+    prompt: string,
+    trigger: string,
+    extra?: ExtraTools,
+  ): Promise<RunResult> {
     await this.store.ensureRole(roleId);
     const messages: Message[] = await this.store.loadSession(roleId, sessionId);
     messages.push({ role: "user", content: prompt });
@@ -55,7 +67,7 @@ export class AgentRuntime {
         model: this.config.model,
         max_tokens: 16_000,
         system,
-        tools: TOOL_DEFS,
+        tools: extra ? [...TOOL_DEFS, ...extra.defs] : TOOL_DEFS,
         messages,
       });
       messages.push({ role: "assistant", content: response.content });
@@ -70,7 +82,9 @@ export class AgentRuntime {
 
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const use of toolUses) {
-        const r = await executeTool({ config: this.config, store: this.store, roleId }, use.name, use.input as any);
+        const r = extra?.defs.some((d) => d.name === use.name)
+          ? await extra.handle(use.name, use.input as any)
+          : await executeTool({ config: this.config, store: this.store, roleId }, use.name, use.input as any);
         await this.store.audit({ roleId, sessionId, event: "tool", tool: use.name, input: use.input, isError: r.isError });
         results.push({ type: "tool_result", tool_use_id: use.id, content: r.content, is_error: r.isError });
       }
