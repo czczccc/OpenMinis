@@ -222,10 +222,11 @@ export class AgentRuntime {
     if (cut <= 0) return messages;
 
     const old = messages.slice(0, cut);
+    const summaryModel = this.deps.provider.current().summaryModel || this.deps.provider.current().model;
     const transcript = old.map(renderForSummary).join("\n\n").slice(-400_000);
     const response = await this.deps.provider.client().messages.create(
       {
-        model: this.deps.provider.current().model,
+        model: summaryModel,
         max_tokens: 4000,
         system,
         messages: [{
@@ -238,7 +239,7 @@ export class AgentRuntime {
       },
       { signal },
     );
-    await this.store.addUsage(roleId, this.deps.provider.current().model, response.usage);
+    await this.store.addUsage(roleId, summaryModel, response.usage);
     const summary = blocksText(response.content);
     const first = messages[cut];
     const compacted: Message[] = [

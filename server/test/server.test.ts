@@ -218,20 +218,32 @@ describe("connectors", () => {
   });
 });
 
-describe("model provider", () => {
-  test("never returns the key and keeps it when left empty", async () => {
-    const r = await call("GET", "/provider");
-    assert.equal(r.body.hasKey, true);
-    assert.equal(r.body.apiKey, undefined);
-    assert.equal((await call("PUT", "/provider", { baseUrl: "ftp://x" })).status, 400);
-    const saved = await call("PUT", "/provider", { baseUrl: `${api.url}/`, apiKey: "", model: "other-model" });
-    assert.equal(saved.status, 200);
-    assert.equal(saved.body.baseUrl, api.url);
-    assert.equal(saved.body.model, "other-model");
-    assert.equal(saved.body.hasKey, true);
-    assert.ok(!JSON.stringify(saved.body).includes('"test"'));
-    await call("PUT", "/provider", { model: "" });
-    assert.equal((await call("GET", "/provider")).body.model, r.body.model);
+describe("model providers", () => {
+  test("add, test, switch and delete without ever returning a key", async () => {
+    const start = await call("GET", "/providers");
+    assert.equal(start.body.active, "env");
+    assert.equal((await call("POST", "/providers", { name: "x", baseUrl: "ftp://x", apiKey: "k", model: "m" })).status, 400);
+    assert.equal((await call("POST", "/providers", { name: "x", model: "m" })).status, 400);
+
+    const added = await call("POST", "/providers", { name: "Proxy", baseUrl: `${api.url}/v1/`, apiKey: "secret-key-1234", model: "proxy-model" });
+    assert.equal(added.status, 200);
+    const p = added.body.providers.find((x: any) => x.name === "Proxy");
+    assert.equal(p.baseUrl, api.url);
+    assert.equal(p.keyHint, "…1234");
+    assert.ok(!JSON.stringify(added.body).includes("secret-key"));
+
+    const tested = await call("POST", `/providers/${p.id}/test`);
+    assert.equal(tested.body.ok, true);
+    assert.equal(api.requests.at(-1).model, "proxy-model");
+
+    assert.equal((await call("POST", `/providers/${p.id}/activate`)).body.active, p.id);
+    await call("PUT", `/providers/${p.id}`, { name: "Proxy 2", baseUrl: api.url, apiKey: "", model: "proxy-model-2" });
+    const after = (await call("GET", "/providers")).body.providers.find((x: any) => x.id === p.id);
+    assert.equal(after.name, "Proxy 2");
+    assert.equal(after.hasKey, true);
+
+    assert.equal((await call("DELETE", "/providers/env")).status, 400);
+    assert.equal((await call("DELETE", `/providers/${p.id}`)).body.active, "env");
   });
 });
 
